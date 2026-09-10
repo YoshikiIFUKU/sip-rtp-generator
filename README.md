@@ -169,11 +169,22 @@ python gen_call.py 通話ログ.csv --no-timings      # 開始時間を使わず
 
 ## 3. GUI で使う
 
+### 実行ファイルを受け取って使う（Python は不要）
+
+[**Releases**](https://github.com/YoshikiIFUKU/sip-rtp-generator/releases) から
+`SIP通話ジェネレータ.exe` をダウンロードして、ダブルクリックするだけです。
+インストールも、Python も、追加のライブラリも要りません。
+
+> 実行ファイルはリポジトリには入れていません（バイナリを git に置くとクローンが重くなるため）。
+> 配布物は Releases に置いてあります。
+
+### ソースから起動する
+
+クローンしたフォルダで、そのまま動きます。追加のインストールは不要です。
+
 ```bash
 python sip_gui.pyw
 ```
-
-配布用の実行ファイルなら、`SIP通話ジェネレータ.exe` をダブルクリックするだけです。
 
 | タブ | 中身 |
 | --- | --- |
@@ -189,7 +200,9 @@ python sip_gui.pyw
 ［ファイル］メニューから設定を JSON で保存でき、その JSON は `gen_call.py -c` に
 そのまま渡せます。**GUI で作った設定を CLI のバッチに回す**、という使い方ができます。
 
-### 配布用の実行ファイルを作る
+### 配布用の実行ファイルを自分で作る
+
+Releases のものを使わず、手元で作り直す場合です。
 
 ```bash
 python -m pip install pyinstaller
