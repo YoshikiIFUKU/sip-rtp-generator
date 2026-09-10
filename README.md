@@ -16,7 +16,7 @@
 * 音声合成は Windows 標準の SAPI（System.Speech）を使うので、**オフラインで完結**します
 * 生成と同時に、発話内容と時刻を記録した **正解データ JSON** が出るので、認識結果の突き合わせにそのまま使えます
 
-台本の書式は TTSWavGenerator にそろえてあります。
+台本の書式は、既に使っている台本ツールにそろえてあります。
 同じ台本ファイルを、WAV を作るときにも pcap を作るときにも使えます。
 
 ---
@@ -171,7 +171,7 @@ python gen_call.py 通話ログ.csv --no-timings      # 開始時間を使わず
 
 ### 実行ファイルを受け取って使う（Python は不要）
 
-[**Releases**](https://github.com/YoshikiIFUKU/sip-rtp-generator/releases) から
+[**Releases**](../../releases) から
 `SipCallGenerator.exe` をダウンロードして、ダブルクリックするだけです。
 インストールも、Python も、追加のライブラリも要りません。
 

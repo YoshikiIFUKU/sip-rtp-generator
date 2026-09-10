@@ -907,13 +907,13 @@ class App(tk.Tk):
         text.config(state="disabled")
 
     def _show_about(self):
+        # 配布先で開かれる画面なので、配布元や開発環境が分かる情報は載せない
         from . import __version__
         messagebox.showinfo(
             TITLE,
             "%s\nバージョン %s\n\n"
-            "通話原稿から SIP/RTP のテスト通話 pcap を生成します。\n"
-            "音声合成には Windows 標準の SAPI を使います。\n\n"
-            "https://github.com/YoshikiIFUKU/sip-rtp-generator"
+            "通話台本から SIP/RTP のテスト通話 pcap を生成します。\n"
+            "音声合成には Windows 標準の SAPI を使います。"
             % (TITLE, __version__))
 
     # ------------------------------------------------------------------
