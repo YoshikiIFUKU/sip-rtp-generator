@@ -8,6 +8,8 @@ import copy
 import json
 import os
 
+from . import sipmsg
+
 DEFAULTS = {
     # 呼の向き。inbound = サーバから電話機へ着信 (コールセンターの受電)、
     # outbound = 電話機から発信
@@ -41,11 +43,23 @@ DEFAULTS = {
         "hangup_by": "local",     # local(電話機) / remote(サーバ側)
         "default_gap": 0.4,       # 発話と発話の間合い(秒)
     },
-    "speakers": {
-        # side は local(電話機側) / remote(サーバ側) のどちらの RTP に載せるか
-        "agent":    {"side": "local",  "voice": "Haruka", "rate": 0, "pitch": "-5%"},
-        "customer": {"side": "remote", "voice": "Haruka", "rate": -1, "pitch": "+18%"},
+    # SIP メッセージに足す・差し替えるヘッダ。キーはメソッド名
+    # (INVITE / ACK / BYE …) か応答コード ("200" など)、"*" は全メッセージ。
+    # From / To / Call-ID / CSeq / Via は呼の識別に使うので変えられない
+    # (From / To は設定の from / to で指定する)。
+    # 値に {call_id} {branch} {cseq} {local_ip} {remote_user} などを書ける。
+    "sip_headers": {
+        "ACK": [],
     },
+    # 台本の読み取り方
+    "script": {
+        "separators": ":：",   # 「話者：本文」の区切り文字。並べて指定する
+        "pattern": None,       # 話者プレフィックスの正規表現を直接指定する場合
+    },
+    # 話者の設定は「上書き」であって「定義」ではない。書かなくても、台本に
+    # 出てきた名前から side を推定する (OP 系→local、CU 系→remote)。
+    # side / voice / rate / pitch を書いた話者だけ、その値が優先される。
+    "speakers": {},
     "hold": {
         "mode": "sendonly",       # sendonly(保留側は送出継続) / inactive(双方停止)
         "by": "local",            # 既定でどちら側が保留を掛けるか
@@ -115,8 +129,12 @@ def load(path=None, overrides=None):
     if cfg["direction"] not in ("inbound", "outbound"):
         raise ValueError("direction は inbound か outbound を指定してください")
     for name, spk in cfg["speakers"].items():
-        if spk.get("side") not in ("local", "remote"):
+        if spk.get("side") is not None and spk["side"] not in ("local", "remote"):
             raise ValueError("話者 %s の side は local か remote です" % name)
+    try:
+        cfg["_sip_headers"] = sipmsg.parse_custom_headers(cfg.get("sip_headers"))
+    except ValueError as exc:
+        raise ValueError("sip_headers: %s" % exc)
     if cfg["hold"].get("media"):
         path_ = cfg["hold"]["media"]
         if not os.path.exists(path_):
@@ -139,3 +157,8 @@ def _as_tokens(value):
 def write_example(path):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(DEFAULTS, f, ensure_ascii=False, indent=2)
+
+
+def public(cfg):
+    """保存・表示用に、内部だけで使うキーを落とした設定を返す。"""
+    return {k: v for k, v in cfg.items() if not k.startswith("_")}

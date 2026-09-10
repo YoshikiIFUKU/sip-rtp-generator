@@ -19,7 +19,7 @@ import os
 import random
 import time
 
-from . import audio, pcapw, rtp, script, sipmsg, tts
+from . import audio, pcapw, rtp, script, sipmsg, speakers, tts
 
 SIDES = ("local", "remote")
 
@@ -83,11 +83,31 @@ class CallBuilder:
             self.caller, self.callee,
             call_id="%08x-%s" % (self.rnd.getrandbits(32), host),
             from_tag="%08x" % self.rnd.getrandbits(32),
-            to_tag="%08x" % self.rnd.getrandbits(32))
+            to_tag="%08x" % self.rnd.getrandbits(32),
+            custom_headers=cfg.get("_sip_headers"))
         self.sdp_session_id = {s: self.rnd.getrandbits(31) for s in SIDES}
 
     def _speaker_side(self, name):
-        return self.cfg["speakers"][name]["side"]
+        side = speakers.side_of(self.cfg["speakers"], name)
+        if side is None:
+            raise BuildError(
+                "話者 %s の側が分かりません（設定にあるのは %s）"
+                % (name, " / ".join(self.cfg["speakers"]) or "なし"))
+        return side
+
+    def _resolve_side(self, value, default):
+        """保留・切断の対象を local / remote に読み替える。
+
+        話者名でも、旧書式の local / remote でも受ける。
+        """
+        if not value:
+            return default
+        if value in SIDES:
+            return value
+        side = speakers.side_of(self.cfg["speakers"], value)
+        if side is None:
+            raise BuildError("話者名か local / remote を指定してください: %s" % value)
+        return side
 
     # ------------------------------------------------------------------
     # 1. メディア計画
@@ -110,7 +130,9 @@ class CallBuilder:
             elif kind in (script.UTTERANCE, script.WAV):
                 side = self._speaker_side(ev["speaker"])
                 samples, source = self._render_audio(ev)
-                start = max(0.0, cursor)
+                # CSV に開始時間の列があればその時刻に置く。無ければ順に並べる
+                start = max(0.0, ev["start"] if ev.get("start") is not None
+                            else cursor)
                 segments[side].append((start, samples))
                 duration = len(samples) / audio.SAMPLE_RATE
                 self.transcript["utterances"].append({
@@ -125,7 +147,8 @@ class CallBuilder:
 
             elif kind == script.DTMF:
                 side = self._speaker_side(ev["speaker"])
-                start = max(0.0, cursor)
+                start = max(0.0, ev["start"] if ev.get("start") is not None
+                            else cursor)
                 digit_s = self.cfg["dtmf"]["digit_ms"] / 1000.0
                 gap_s = self.cfg["dtmf"]["gap_ms"] / 1000.0
                 duration = len(ev["digits"]) * (digit_s + gap_s)
@@ -140,14 +163,28 @@ class CallBuilder:
             elif kind == script.HOLD:
                 if open_hold is not None:
                     raise BuildError(
-                        "%d 行目: 保留が解除されないまま再度 @hold されています"
+                        "%d 行目: 保留が解除されないまま、もう一度保留になっています"
                         % ev["line"])
-                open_hold = (max(0.0, cursor),
-                             ev["side"] or self.cfg["hold"]["by"], ev["line"])
+                holder = self._resolve_side(ev.get("speaker"),
+                                            self.cfg["hold"]["by"])
+                start = max(0.0, cursor)
+                if ev.get("seconds"):
+                    # （保留 6秒）は、その場で解除まで済ませる
+                    end = start + ev["seconds"]
+                    holds.append((start, end, holder))
+                    self.transcript["events"].append({
+                        "type": "hold", "by": holder, "start": round(start, 3),
+                        "end": round(end, 3), "duration": round(end - start, 3),
+                        "mode": self.cfg["hold"]["mode"], "script_line": ev["line"],
+                    })
+                    cursor = end
+                else:
+                    open_hold = (start, holder, ev["line"])
 
             elif kind == script.UNHOLD:
                 if open_hold is None:
-                    raise BuildError("%d 行目: @hold のない @unhold です" % ev["line"])
+                    raise BuildError(
+                        "%d 行目: 保留していないのに保留解除になっています" % ev["line"])
                 start, holder, line = open_hold
                 end = max(start + self.packet_seconds, cursor)
                 holds.append((start, end, holder))
@@ -159,7 +196,7 @@ class CallBuilder:
                 open_hold = None
 
             elif kind == script.HANGUP:
-                hangup_side = ev["side"] or hangup_side
+                hangup_side = self._resolve_side(ev.get("speaker"), hangup_side)
 
         if open_hold is not None:
             # 解除されないまま原稿が終わったら、通話終了までを保留とみなす
@@ -169,7 +206,7 @@ class CallBuilder:
                 "type": "hold", "by": holder, "start": round(start, 3),
                 "end": round(cursor, 3), "duration": round(cursor - start, 3),
                 "mode": self.cfg["hold"]["mode"], "script_line": line,
-                "note": "@unhold がないため通話終了まで保留",
+                "note": "保留解除がないため通話終了まで保留",
             })
 
         duration = cursor + self.cfg["call"]["tail_seconds"]

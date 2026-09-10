@@ -15,7 +15,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from sipgen import audio, builder, config, script, service, tts
+from sipgen import audio, builder, config, loader, script, service, tabular, tts
 
 
 def main(argv=None):
@@ -37,19 +37,22 @@ def main(argv=None):
     except (ValueError, OSError, json.JSONDecodeError) as exc:
         return _fail("設定の読み込みに失敗しました: %s" % exc)
 
+    if args.show_columns:
+        return _show_columns(args)
+
     base_dir = os.path.dirname(os.path.abspath(args.script)) or "."
-    with io.open(args.script, encoding="utf-8-sig") as f:
-        text = f.read()
     try:
-        events = script.parse(text, cfg["speakers"], base_dir)
-    except script.ScriptError as exc:
-        return _fail("原稿の書式エラー\n%s" % exc)
+        parsed = loader.parse_file(args.script, cfg, _table_options(args))
+        resolved = loader.resolve_speakers(cfg, parsed)
+    except (script.ScriptError, tabular.TableError, loader.LoadError) as exc:
+        return _fail("台本の書式エラー\n%s" % exc)
 
     log = (lambda msg: None) if args.quiet else (lambda msg: print(msg))
     cache_dir = args.cache_dir or os.path.join(base_dir, ".tts-cache")
 
-    log("原稿: %s (%d 個の指示)" % (args.script, len(events)))
-    call = builder.CallBuilder(cfg, events, base_dir=base_dir,
+    log("台本: %s（%d 行）" % (args.script, len(parsed)))
+    log("話者: %s" % loader.describe_speakers(resolved, parsed.speakers))
+    call = builder.CallBuilder(cfg, parsed, base_dir=base_dir,
                                cache_dir=cache_dir, seed=args.seed, log=log)
     try:
         writer, transcript, plan = call.build()
@@ -88,7 +91,8 @@ def _build_parser():
       --from 0312345678 --to 1001 -o out/test.pcap
   python gen_call.py --list-voices
 """)
-    p.add_argument("script", nargs="?", help="通話原稿のテキストファイル")
+    p.add_argument("script", nargs="?",
+                   help="通話台本（.txt の『話者：本文』か、.csv / .tsv）")
     p.add_argument("-c", "--config", help="設定 JSON")
     p.add_argument("-o", "--output", help="出力する pcap (既定: 原稿と同名 .pcap)")
     p.add_argument("--transcript",
@@ -109,6 +113,35 @@ def _build_parser():
                    help="inbound=着信 / outbound=発信")
     g.add_argument("--codec", choices=["PCMU", "PCMA"], help="音声コーデック")
     g.add_argument("--start-time", help="pcap の開始時刻 (ISO8601)")
+
+    t = p.add_argument_group("台本の読み取り")
+    t.add_argument("--separators", metavar="文字",
+                   help="『話者：本文』の区切り文字を並べて指定 (既定: :：)")
+    t.add_argument("--pattern", metavar="正規表現",
+                   help=r"話者プレフィックスの正規表現。"
+                        r"1 番目が話者、2 番目が本文 (例: ^\[(.+?)\]\s*(.*)$)")
+    t.add_argument("--delimiter", metavar="文字",
+                   help="CSV/TSV の列の区切り。省略すると自動判定")
+    t.add_argument("--speaker-column", metavar="列",
+                   help="話者の列。列名でも 1 のような列番号でも指定できる")
+    t.add_argument("--text-column", metavar="列", help="本文の列")
+    t.add_argument("--start-column", metavar="列", help="開始時間の列")
+    t.add_argument("--no-header", action="store_true",
+                   help="CSV の先頭行を見出しではなくデータとして扱う")
+    t.add_argument("--no-timings", action="store_true",
+                   help="CSV の開始時間列を使わず、順番に並べる")
+    t.add_argument("--show-columns", action="store_true",
+                   help="区切り文字の判定結果と列一覧を表示して終了")
+
+    h = p.add_argument_group("SIP ヘッダの追加")
+    h.add_argument("--ack-header", metavar="ヘッダ", action="append", default=[],
+                   help="ACK に足す・差し替えるヘッダ。"
+                        '"X-Call-Id: {call_id}" のように書く。複数回指定できる')
+    h.add_argument("--sip-header", metavar="対象:ヘッダ", action="append",
+                   default=[],
+                   help="ACK 以外にも足す場合。"
+                        '"INVITE:X-Foo: bar" や "*:X-Run: 001" のように、'
+                        "先頭にメソッド名か応答コード（* は全部）を書く")
 
     s = p.add_argument_group("音声認識サービスへの取り込み")
     s.add_argument("--restart-service", action="store_true",
@@ -150,6 +183,16 @@ def _cli_overrides(args):
         over["codec"] = args.codec
     if args.start_time:
         over["call"] = {"start_time": args.start_time}
+    if args.separators or args.pattern:
+        over["script"] = {}
+        if args.separators:
+            over["script"]["separators"] = args.separators
+        if args.pattern:
+            over["script"]["pattern"] = args.pattern
+
+    headers = _header_overrides(args)
+    if headers:
+        over["sip_headers"] = headers
 
     svc = {}
     if args.restart_service:
@@ -163,6 +206,43 @@ def _cli_overrides(args):
     if svc:
         over["service"] = svc
     return over
+
+
+def _header_overrides(args):
+    """--ack-header / --sip-header を sip_headers の形に直す。"""
+    headers = {}
+    for line in args.ack_header:
+        headers.setdefault("ACK", []).append(line)
+    for line in args.sip_header:
+        target, sep, rest = line.partition(":")
+        if not sep or ":" not in rest:
+            raise ValueError(
+                "--sip-header は『対象:ヘッダ名: 値』の形で書いてください: %s"
+                % line)
+        headers.setdefault(target.strip().upper(), []).append(rest.strip())
+    return headers
+
+
+def _table_options(args):
+    options = {"delimiter": args.delimiter,
+               "speaker_column": args.speaker_column,
+               "text_column": args.text_column,
+               "start_column": args.start_column}
+    if args.no_header:
+        options["has_header"] = False
+    if args.no_timings:
+        options["use_timings"] = False
+    return {k: v for k, v in options.items() if v is not None}
+
+
+def _show_columns(args):
+    """CSV の列名が分からないときに、まず中身を見るための出口。"""
+    try:
+        text = loader.read_text(args.script)
+        print(tabular.describe(text, args.delimiter))
+    except (tabular.TableError, OSError) as exc:
+        return _fail(str(exc))
+    return 0
 
 
 def _restart_service(svc, pcap_path, quiet):

@@ -32,10 +32,6 @@
     "default_gap": 0.3
   },
 
-  "speakers": {
-    "agent": { "side": "local",  "voice": "Haruka", "rate": 0, "pitch": "+10%" },
-    "ivr":   { "side": "remote", "voice": "Haruka", "rate": 0, "pitch": "-10%" }
-  },
 
   "hold": {
     "mode": "sendonly",

@@ -32,10 +32,6 @@
     "default_gap": 0.4
   },
 
-  "speakers": {
-    "agent":    { "side": "local",  "voice": "Haruka", "rate": 0,  "pitch": "-8%" },
-    "customer": { "side": "remote", "voice": "Haruka", "rate": -1, "pitch": "+20%" }
-  },
 
   "hold": {
     "mode": "sendonly",
@@ -57,6 +53,13 @@
   "network": {
     "jitter_ms": 0.0,
     "packet_loss": 0.0
+  },
+
+  "sip_headers": {
+    "ACK": [
+      "X-Call-Id: {call_id}",
+      "X-Agent-Extension: 1001"
+    ]
   },
 
   "service": {

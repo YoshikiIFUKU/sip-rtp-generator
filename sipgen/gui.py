@@ -8,9 +8,10 @@ GUI をこの形にしている理由。
 
 画面の構成は CLI の考え方と対応させてある。
 
-  通話原稿  … 原稿ファイル (gen_call.py の位置引数) と同じ内容
-  接続設定  … 設定 JSON の sip_server / client / from / to / call
-  話者      … 設定 JSON の speakers
+  通話原稿  … 台本ファイル (gen_call.py の位置引数) と同じ内容
+  接続設定  … 設定 JSON の sip_server / client / from / to / call /
+              hold / media / network / sip_headers
+  話者      … 台本から拾った話者と、設定 JSON の speakers による上書き
   取り込み  … 設定 JSON の service
 
 ［生成］を押すと、CLI と同じ builder.CallBuilder を呼ぶ。
@@ -30,31 +31,31 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
-from . import audio, builder, config, script, service, tts
+from . import (audio, builder, config, loader, script, service,
+               speakers as speakers_mod, tabular, tts)
 
 MONO = ("MS Gothic", 10)      # 日本語が出て等幅であること
 TITLE = "SIP/RTP テスト通話ジェネレータ"
 
 SAMPLE_SCRIPT = """\
-# 「話者: セリフ」で発話、@ で始まる行が指示です。
-# 話者名は［話者］タブで定義します。
+# 1 行 1 発話。「話者：本文」と書くだけです。
+# 話者名は自由で、事前の定義は要りません。
+# OP のような名前は電話機側、CU のような名前はサーバ側に自動で振り分けます。
 
-agent: お電話ありがとうございます。サポートセンターでございます。
-customer: 料金プランのことで確認したいことがありまして。
+OP：お電話ありがとうございます。サポートセンターでございます。
+CU：料金プランのことで確認したいことがありまして。
 
-@wait -0.6            # 負の値で直前の発話に重ねる（相づち・かぶり）
-agent: はい。
+（0.6秒かぶせる）
+OP：はい。
 
-agent: お調べいたしますので、少々お待ちください。
-@hold                 # 保留（re-INVITE / a=sendonly）
-@wait 6
-@unhold               # 保留解除
+OP：お調べいたしますので、少々お待ちください。
+（保留 6秒）
+OP：大変お待たせいたしました。
 
-agent: 大変お待たせいたしました。
-@dtmf customer: 1234# # DTMF（RFC 2833）
+（プッシュ音 CU：1234#）
 
-customer: ありがとうございました。
-@hangup agent         # この側から BYE を送る
+CU：ありがとうございました。
+（切断 OP）
 """
 
 # 接続設定タブに並べる項目。(設定のキー, ラベル, 型, 補足)
@@ -228,16 +229,40 @@ class App(tk.Tk):
                         "送出時刻のゆらぎ。劣化テスト用")
         self._add_entry(extra, 4, ("network", "packet_loss"), "パケットロス率", "float",
                         "0.0〜1.0。劣化テスト用")
+
+        headers = ttk.LabelFrame(inner, text="ACK に足すヘッダ", padding=8)
+        headers.grid(row=row + 1, column=0, sticky="ew", padx=4, pady=4)
+        ttk.Label(headers, wraplength=760, foreground="#444",
+                  text="1 行に 1 つ「名前: 値」で書きます。"
+                       "同じ名前があれば差し替わります。"
+                       "{call_id} {branch} {cseq} {local_ip} {local_user} "
+                       "{remote_ip} {remote_user} を値に差し込めます。"
+                  ).pack(anchor="w", pady=(0, 4))
+        self.ack_headers_text = ScrolledText(headers, font=MONO, height=4,
+                                             wrap="none")
+        self.ack_headers_text.pack(fill="x")
+        ttk.Label(headers, foreground="#888",
+                  text="From / To / Call-ID / CSeq / Via は呼の識別に使うため、"
+                       "ここでは変えられません（From・To は上の欄で指定します）。"
+                  ).pack(anchor="w", pady=(4, 0))
         return outer
 
     def _tab_speakers(self, parent):
         frame = ttk.Frame(parent, padding=8)
 
         ttk.Label(frame, wraplength=900, foreground="#444",
-                  text="原稿の「話者: セリフ」で使う名前を定義します。"
-                       "side が local なら電話機側、remote ならサーバ側の RTP に載ります。"
-                       "日本語の声が 1 つしかない環境では、ピッチを変えて聞き分けます。"
+                  text="話者は台本から自動で拾います。ここで定義しなくても生成できます。"
+                       "OP・オペレータ などは電話機側(local)、CU・お客様 などは"
+                       "サーバ側(remote) に振り分けます。"
+                       "変えたいときだけ、下の表で上書きしてください。"
                   ).pack(anchor="w", pady=(0, 6))
+
+        bar = ttk.Frame(frame)
+        bar.pack(fill="x", pady=(0, 6))
+        ttk.Button(bar, text="台本から読み込む",
+                   command=self._load_speakers_from_script).pack(side="left")
+        ttk.Button(bar, text="すべて消す（自動に戻す）",
+                   command=self._clear_speakers).pack(side="left", padx=6)
 
         columns = ("name", "side", "voice", "rate", "pitch")
         headings = ("話者名", "side", "声", "速度", "ピッチ")
@@ -417,6 +442,7 @@ class App(tk.Tk):
             else:
                 var.set("" if value is None else str(value))
         self._load_speakers(cfg["speakers"])
+        self._set_ack_headers(_dig(cfg, ("sip_headers", "ACK")) or [])
 
     def _collect_config(self):
         cfg = json.loads(json.dumps(config.DEFAULTS))
@@ -438,7 +464,21 @@ class App(tk.Tk):
                     continue
             _bury(cfg, key, value)
         cfg["speakers"] = self._collect_speakers()
+        cfg["sip_headers"] = dict(cfg.get("sip_headers") or {})
+        cfg["sip_headers"]["ACK"] = self._collect_ack_headers()
         return config.load(None, cfg)
+
+    def _collect_ack_headers(self):
+        lines = self.ack_headers_text.get("1.0", "end-1c").splitlines()
+        return [line.strip() for line in lines if line.strip()]
+
+    def _set_ack_headers(self, entries):
+        if isinstance(entries, dict):
+            lines = ["%s: %s" % (k, v) for k, v in entries.items()]
+        else:
+            lines = list(entries)
+        self.ack_headers_text.delete("1.0", "end")
+        self.ack_headers_text.insert("1.0", "\n".join(lines))
 
     def _load_speakers(self, speakers):
         self.speaker_tree.delete(*self.speaker_tree.get_children())
@@ -461,9 +501,34 @@ class App(tk.Tk):
             if pitch:
                 spec["pitch"] = pitch
             speakers[name] = spec
-        if not speakers:
-            raise ValueError("話者が 1 人も定義されていません（［話者］タブ）")
+        # 空でもよい。台本から拾って側を推定するのが既定の流れで、
+        # ここに並ぶのはその結果と、利用者が変えた上書きだけ
         return speakers
+
+    def _load_speakers_from_script(self):
+        """いまの台本を解析して、拾えた話者を表に並べる。"""
+        try:
+            parsed = self._parse_script()
+        except (script.ScriptError, tabular.TableError) as exc:
+            messagebox.showerror(TITLE, "台本の書式エラー\n\n%s" % exc)
+            return
+        resolved = speakers_mod.resolve(parsed.speakers, self._collect_speakers())
+        ordered = {name: resolved[name] for name in parsed.speakers}
+        self._load_speakers(ordered)
+        self._log("台本から話者を読み込みました: %s"
+                  % loader.describe_speakers(ordered, parsed.speakers), "info")
+
+    def _clear_speakers(self):
+        self.speaker_tree.delete(*self.speaker_tree.get_children())
+        self._log("話者の上書きを消しました。台本から自動で判定します。", "info")
+
+    def _parse_script(self):
+        """画面の台本テキストを解析する。"""
+        cfg = {"script": dict(config.DEFAULTS["script"])}
+        base_dir = (os.path.dirname(self.script_path) if self.script_path
+                    else os.path.dirname(os.path.abspath(self.output_var.get())))
+        return loader.parse_text(self.script_text.get("1.0", "end"),
+                                 base_dir=base_dir or ".", cfg=cfg)
 
     def _on_speaker_selected(self, _event=None):
         selection = self.speaker_tree.selection()
@@ -517,25 +582,31 @@ class App(tk.Tk):
             out_path += ".pcap"
             self.output_var.set(out_path)
 
-        text = self.script_text.get("1.0", "end")
         base_dir = (os.path.dirname(self.script_path) if self.script_path
                     else os.path.dirname(os.path.abspath(out_path)))
         try:
-            events = script.parse(text, cfg["speakers"], base_dir)
-        except script.ScriptError as exc:
-            messagebox.showerror(TITLE, "原稿の書式エラー\n\n%s" % exc)
+            parsed = loader.parse_text(self.script_text.get("1.0", "end"),
+                                       base_dir=base_dir or ".", cfg=cfg)
+            resolved = loader.resolve_speakers(cfg, parsed)
+        except (script.ScriptError, tabular.TableError, loader.LoadError) as exc:
+            messagebox.showerror(TITLE, "台本の書式エラー\n\n%s" % exc)
             return
+
+        # 台本から拾った話者を画面にも反映して、どちら側になったか見せる
+        self._load_speakers({name: resolved[name] for name in parsed.speakers})
 
         self._set_busy(True)
         self._clear_log()
-        self._log("生成を開始します（%d 個の指示）" % len(events), "info")
+        self._log("台本: %d 行" % len(parsed), "info")
+        self._log("話者: %s" % loader.describe_speakers(resolved, parsed.speakers),
+                  "info")
         threading.Thread(target=self._generate_worker,
-                         args=(cfg, events, out_path, base_dir),
+                         args=(cfg, parsed, out_path, base_dir),
                          daemon=True).start()
 
-    def _generate_worker(self, cfg, events, out_path, base_dir):
+    def _generate_worker(self, cfg, parsed, out_path, base_dir):
         try:
-            call = builder.CallBuilder(cfg, events, base_dir=base_dir,
+            call = builder.CallBuilder(cfg, parsed, base_dir=base_dir,
                                        cache_dir=_cache_dir(),
                                        log=lambda msg: self._post("log", msg))
             writer, transcript, _ = call.build()
@@ -756,7 +827,8 @@ class App(tk.Tk):
         if not path:
             return
         with io.open(path, "w", encoding="utf-8") as f:
-            json.dump(cfg, f, ensure_ascii=False, indent=2)
+            # 内部でしか使わないキー（正規化済みヘッダなど）は落として保存する
+            json.dump(config.public(cfg), f, ensure_ascii=False, indent=2)
         self.config_path = path
         self._log("設定を保存しました: %s" % path, "ok")
 
@@ -893,58 +965,83 @@ class App(tk.Tk):
             self._refresh_elevation()
 
 
-HELP_TEXT = """\
-原稿の書き方
+HELP_TEXT = """台本の書き方
 ──────────────────────────────────────────
 
-  話者: セリフ          その話者の音声を合成して流します
-                        話者名は［話者］タブで定義します
+1 行 1 発話。「話者：本文」と書くだけです。
 
-  @wait 秒              間を空けます
-                        負の値を書くと直前の発話に重なります（相づち・かぶり）
+  OP：お電話ありがとうございます。
+  CU：契約内容を確認したいのですが。
 
-  @hold                 保留を掛けます（re-INVITE / a=sendonly）
-  @hold agent           掛ける側を指定する場合
-  @unhold               保留を解除します（a=sendrecv）
+話者名は自由で、事前に定義する必要はありません。
+名前から、どちら側の音声かを自動で判断します。
 
-  @dtmf 話者: 1234#     DTMF を送ります（RFC 2833）
-                        使える文字は 0-9 * # A-D
+  OP / オペレータ / 担当 / 受付 / AGENT …… 電話機側（local）
+  CU / お客様 / 顧客 / カスタマ / ユーザ …… サーバ側（remote）
 
-  @wav 話者: ./a.wav    既存の WAV をそのまま流します
-                        8kHz 以外・ステレオでも自動で変換します
+当てはまらない名前は、出てきた順に電話機側 → サーバ側と割り当てます。
+変えたいときは［話者］タブで上書きしてください。
 
-  @hangup 話者          この側から BYE を送ります
+区切りは全角「：」と半角「:」のどちらでも構いません。
+行頭の # はコメント、空行は無視されます。
 
-  # で始まる行はコメントです
+
+通話中の操作
+──────────────────────────────────────────
+
+行全体を丸括弧で囲むと指示になります。半角 ( ) でも書けます。
+
+  （3秒あける）           間を空ける
+  （0.6秒かぶせる）       次の発話を直前に食い込ませる（相づち・かぶり）
+  （保留）                保留する。（保留解除）まで続く
+  （保留 6秒）            6 秒だけ保留する
+  （保留 OP）             掛ける側を指定する
+  （保留解除）            保留を解除する
+  （プッシュ音 CU：1234#）DTMF を送る。0-9 * # A-D が使えます
+  （音声 OP：./ivr.wav）  既存の WAV をそのまま流す
+  （切断 OP）             この側から BYE を送る
+
+指示行には行末コメントも書けます。（3秒あける）  # 間を置く
 
 
 例
 ──────────────────────────────────────────
 
-  agent: お電話ありがとうございます。
-  customer: 契約内容を確認したいのですが。
-  @wait -0.5
-  agent: はい。
-  @hold
-  @wait 5
-  @unhold
-  agent: お待たせいたしました。
-  @dtmf customer: 1234#
-  @hangup agent
+  OP：お電話ありがとうございます。
+  CU：契約内容を確認したいのですが。
+  （0.6秒かぶせる）
+  OP：はい。
+  OP：お調べしますので少々お待ちください。
+  （保留 5秒）
+  OP：お待たせいたしました。
+  （プッシュ音 CU：1234#）
+  （切断 OP）
+
+
+CSV / Excel から読む
+──────────────────────────────────────────
+
+「話者・開始時間・発言内容」の列を持つ CSV も、そのまま開けます。
+列名から役割を自動で判定します（話者 / 発言内容(認識結果) / 開始時間 など）。
+
+  話者,開始時間,発言内容
+  OP,00:00.5,お電話ありがとうございます。
+  CU,00:05.0,確認したいことがあります。
+
+開始時間の列があれば、その時刻に発話を置きます。無ければ順に並びます。
 
 
 覚えておくと便利なこと
 ──────────────────────────────────────────
 
 * 発話と発話のあいだには［接続設定］の「発話間の間合い」が自動で入ります。
-  @wait はそこに足し引きされます。
-
-* 話者の side が local なら電話機側、remote ならサーバ側の RTP に載ります。
-  オペレーターとお客様を別ストリームに分けたい場合はここで振り分けます。
+  （3秒あける）はそこに足し引きされます。
 
 * 生成すると pcap と同じ場所に同名の .json が出ます。
   どの発話が何秒に入っているかが記録されているので、認識結果の
   答え合わせに使えます。
+
+* 以前の @hold / @wait 形式の台本もそのまま読めます。
 """
 
 
