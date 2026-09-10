@@ -1,0 +1,11 @@
+# 合成音声のキャッシュ。原稿から作り直せるので追跡しない
+.tts-cache/
+
+# 生成した pcap・正解データ・確認用 WAV。原稿と設定から再生成できる
+out/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/

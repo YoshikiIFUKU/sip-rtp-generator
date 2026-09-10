@@ -1,0 +1,5 @@
+* text=auto
+
+# PowerShell 5.1 は BOM のない UTF-8 を ANSI として読むため、
+# speak.ps1 は BOM 付き UTF-8 / CRLF のまま配布する
+*.ps1 text eol=crlf working-tree-encoding=UTF-8

@@ -1,0 +1,61 @@
+{
+  "direction": "outbound",
+
+  "sip_server": {
+    "ip": "192.168.10.1",
+    "port": 5060,
+    "domain": "pbx.example.local",
+    "rtp_port": 30002,
+    "mac": "00:1a:2b:00:00:01",
+    "user_agent": "TestPBX/1.0"
+  },
+  "client": {
+    "ip": "192.168.10.51",
+    "port": 5060,
+    "rtp_port": 40002,
+    "mac": "00:1a:2b:00:00:03",
+    "user_agent": "TestPhone/1.0"
+  },
+
+  "from": { "user": "1001", "display": "内線1001" },
+  "to":   { "user": "0120999888", "display": null },
+
+  "codec": "PCMU",
+  "ptime": 20,
+
+  "call": {
+    "start_time": "2026-09-10T14:30:00",
+    "ring_seconds": 3.0,
+    "answer_delay": 0.3,
+    "tail_seconds": 1.0,
+    "hangup_by": "remote",
+    "default_gap": 0.3
+  },
+
+  "speakers": {
+    "agent": { "side": "local",  "voice": "Haruka", "rate": 0, "pitch": "+10%" },
+    "ivr":   { "side": "remote", "voice": "Haruka", "rate": 0, "pitch": "-10%" }
+  },
+
+  "hold": {
+    "mode": "sendonly",
+    "by": "remote",
+    "media": null
+  },
+
+  "dtmf": {
+    "payload_type": 101,
+    "digit_ms": 120,
+    "gap_ms": 80
+  },
+
+  "media": {
+    "silence_mode": "continuous",
+    "normalize": true
+  },
+
+  "network": {
+    "jitter_ms": 1.5,
+    "packet_loss": 0.0
+  }
+}

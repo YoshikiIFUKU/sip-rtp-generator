@@ -1,0 +1,69 @@
+{
+  "direction": "inbound",
+
+  "sip_server": {
+    "ip": "192.168.10.1",
+    "port": 5060,
+    "domain": "pbx.example.local",
+    "rtp_port": 30000,
+    "mac": "00:1a:2b:00:00:01",
+    "user_agent": "TestPBX/1.0"
+  },
+  "client": {
+    "ip": "192.168.10.50",
+    "port": 5060,
+    "rtp_port": 40000,
+    "mac": "00:1a:2b:00:00:02",
+    "user_agent": "TestPhone/1.0"
+  },
+
+  "from": { "user": "0312345678", "display": "山田 花子" },
+  "to":   { "user": "1001",       "display": "サポート受付" },
+
+  "codec": "PCMU",
+  "ptime": 20,
+
+  "call": {
+    "start_time": "2026-09-10T10:00:00",
+    "ring_seconds": 2.0,
+    "answer_delay": 0.5,
+    "tail_seconds": 1.0,
+    "hangup_by": "local",
+    "default_gap": 0.4
+  },
+
+  "speakers": {
+    "agent":    { "side": "local",  "voice": "Haruka", "rate": 0,  "pitch": "-8%" },
+    "customer": { "side": "remote", "voice": "Haruka", "rate": -1, "pitch": "+20%" }
+  },
+
+  "hold": {
+    "mode": "sendonly",
+    "by": "local",
+    "media": null
+  },
+
+  "dtmf": {
+    "payload_type": 101,
+    "digit_ms": 100,
+    "gap_ms": 60
+  },
+
+  "media": {
+    "silence_mode": "continuous",
+    "normalize": true
+  },
+
+  "network": {
+    "jitter_ms": 0.0,
+    "packet_loss": 0.0
+  },
+
+  "service": {
+    "enabled": false,
+    "name": "AmiVoiceRealTimeRecorder",
+    "start_args": "--callid-generate --packet-sync {pcap}",
+    "stop_timeout": 30,
+    "start_timeout": 30
+  }
+}
