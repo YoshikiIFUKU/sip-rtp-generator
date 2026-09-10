@@ -4,6 +4,11 @@
 # 生成した pcap・正解データ・確認用 WAV。原稿と設定から再生成できる
 out/
 
+# PyInstaller の作業用と成果物（build_exe.py で作り直せる）
+build/
+dist/
+*.spec
+
 # Python
 __pycache__/
 *.py[cod]

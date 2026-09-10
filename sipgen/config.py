@@ -95,6 +95,19 @@ def load(path=None, overrides=None):
     if overrides:
         cfg = _merge(cfg, {k: v for k, v in overrides.items() if v is not None})
 
+    # GUI で欄を空にしたときなど、必須項目が抜けたまま組み立てに進むと
+    # 分かりにくいところで落ちるので、ここで止める
+    for section, label in (("sip_server", "SIP サーバ"), ("client", "クライアント電話機")):
+        if not cfg[section].get("ip"):
+            raise ValueError("%sの IP アドレスを指定してください" % label)
+        for port_key, port_label in (("port", "SIP ポート"), ("rtp_port", "RTP ポート")):
+            port = cfg[section].get(port_key)
+            if not isinstance(port, int) or not 1 <= port <= 65535:
+                raise ValueError("%sの%sが不正です: %r" % (label, port_label, port))
+    for section in ("from", "to"):
+        if not cfg[section].get("user"):
+            raise ValueError("%s ヘッダのユーザ部を指定してください" % section.capitalize())
+
     if not cfg["sip_server"].get("domain"):
         cfg["sip_server"]["domain"] = cfg["sip_server"]["ip"]
     if cfg["codec"] not in ("PCMU", "PCMA"):

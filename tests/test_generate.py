@@ -101,6 +101,33 @@ class TestScript(unittest.TestCase):
         with self.assertRaises(script.ScriptError):
             script.parse("# コメントだけ\n", self.speakers)
 
+    def test_trailing_comments_are_stripped(self):
+        events = script.parse(
+            "agent: おはようございます。\n"
+            "@wait -0.6            # 負の値で重ねる\n"
+            "@hold                 # 保留する\n",
+            self.speakers)
+        self.assertEqual([e["type"] for e in events], ["utterance", "wait", "hold"])
+        self.assertEqual(events[1]["seconds"], -0.6)
+
+    def test_hash_without_leading_space_is_kept(self):
+        """DTMF の # やセリフ中の # をコメント扱いしないこと。"""
+        events = script.parse("@dtmf customer: 1234#\ncustomer: #1番でお願いします。\n",
+                              self.speakers)
+        self.assertEqual(events[0]["digits"], "1234#")
+        self.assertEqual(events[1]["text"], "#1番でお願いします。")
+
+    def test_dtmf_keeps_digits_when_commented(self):
+        events = script.parse("@dtmf customer: 1234#  # 暗証番号\n", self.speakers)
+        self.assertEqual(events[0]["digits"], "1234#")
+
+    def test_gui_sample_script_parses(self):
+        """GUI の初期表示がそのまま通ること（行末コメントを含む）。"""
+        from sipgen import gui
+        events = script.parse(gui.SAMPLE_SCRIPT, self.speakers)
+        self.assertTrue(any(e["type"] == "dtmf" for e in events))
+        self.assertTrue(any(e["type"] == "hold" for e in events))
+
 
 class TestSip(unittest.TestCase):
     def test_body_uses_single_crlf(self):
@@ -388,6 +415,94 @@ class TestServiceConfig(unittest.TestCase):
                                              "name": "MyRecorder"}})
         self.assertEqual(cfg["service"]["name"], "MyRecorder")
         self.assertIn("{pcap}", cfg["service"]["start_args"])
+
+
+class TestGui(unittest.TestCase):
+    """画面 <-> 設定 の変換。ウィンドウは出さずに中身だけ確かめる。"""
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            from sipgen import gui
+        except ImportError as exc:      # tkinter のない環境
+            raise unittest.SkipTest("tkinter が使えません: %s" % exc)
+        cls.gui = gui
+        try:
+            cls.app = gui.App()
+        except Exception as exc:        # 画面のない環境
+            raise unittest.SkipTest("画面を開けません: %s" % exc)
+        cls.app.withdraw()
+
+    @classmethod
+    def tearDownClass(cls):
+        if getattr(cls, "app", None) is not None:
+            cls.app.destroy()
+
+    def setUp(self):
+        self.app._apply_config(config.DEFAULTS)
+
+    def test_defaults_round_trip(self):
+        cfg = self.app._collect_config()
+        for key in ("direction", "codec"):
+            self.assertEqual(cfg[key], config.DEFAULTS[key])
+        self.assertEqual(cfg["sip_server"]["ip"], config.DEFAULTS["sip_server"]["ip"])
+        self.assertEqual(cfg["speakers"].keys(), config.DEFAULTS["speakers"].keys())
+        self.assertEqual(cfg["service"]["start_args"],
+                         config.DEFAULTS["service"]["start_args"])
+
+    def test_edits_survive_round_trip(self):
+        self.app.vars[("sip_server", "ip")].set("10.1.2.3")
+        self.app.vars[("call", "ring_seconds")].set("4.5")
+        self.app.vars[("direction",)].set(
+            dict(self.gui.CHOICES[("direction",)])["outbound"])
+
+        cfg = self.app._collect_config()
+        self.assertEqual(cfg["sip_server"]["ip"], "10.1.2.3")
+        self.assertEqual(cfg["call"]["ring_seconds"], 4.5)
+        self.assertEqual(cfg["direction"], "outbound")
+
+        self.app._apply_config(cfg)
+        self.assertEqual(self.app.vars[("sip_server", "ip")].get(), "10.1.2.3")
+        self.assertEqual(self.app._collect_config()["direction"], "outbound")
+
+    def test_blank_number_keeps_default(self):
+        """数値欄を空にしても None にせず既定値を残すこと。"""
+        self.app.vars[("network", "jitter_ms")].set("")
+        cfg = self.app._collect_config()
+        self.assertEqual(cfg["network"]["jitter_ms"],
+                         config.DEFAULTS["network"]["jitter_ms"])
+
+    def test_blank_required_field_is_rejected(self):
+        self.app.vars[("sip_server", "ip")].set("")
+        with self.assertRaises(ValueError):
+            self.app._collect_config()
+
+    def test_bad_number_is_rejected(self):
+        self.app.vars[("call", "ring_seconds")].set("いつか")
+        with self.assertRaises(ValueError):
+            self.app._collect_config()
+
+    def test_sample_script_builds_a_valid_call(self):
+        cfg = self.app._collect_config()
+        events = script.parse(self.gui.SAMPLE_SCRIPT, cfg["speakers"])
+        # 音声合成を避けるため、発話はサイン波の WAV に差し替える
+        folder = tempfile.mkdtemp()
+        try:
+            tone = os.path.join(folder, "t.wav")
+            make_tone_wav(tone, 0.4)
+            for event in events:
+                if event["type"] == script.UTTERANCE:
+                    event.update({"type": script.WAV, "path": tone})
+            writer, transcript, _ = builder.CallBuilder(
+                cfg, events, base_dir=folder, seed=5).build()
+            path = os.path.join(folder, "gui.pcap")
+            writer.write(path)
+            _, packets = read_pcap(path)
+            self.assertTrue(packets)
+            self.assertTrue(any(e["type"] == "hold" for e in transcript["events"]))
+            self.assertTrue(any(e["type"] == "dtmf" for e in transcript["events"]))
+        finally:
+            shutil.rmtree(folder, ignore_errors=True)
 
 
 if __name__ == "__main__":

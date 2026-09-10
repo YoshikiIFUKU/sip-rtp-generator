@@ -4,7 +4,8 @@
 台本を読むのと同じ順序で通話が組み立てられることを優先し、
 タイミングは既定の間合いに任せ、必要なときだけ @wait で調整する。
 
-  # 行頭の # はコメント
+  # 行頭の # はコメント。@ で始まる指示行では行末コメントも書ける
+  #（セリフ行の # は読み上げ対象なので残る）
   agent: お電話ありがとうございます。
   customer: 契約内容を確認したいのですが。
   @wait 1.5           1.5 秒の間。負の値を書くと直前の発話に食い気味に重なる
@@ -29,6 +30,11 @@ HANGUP = "hangup"
 _SPEAKER_LINE = re.compile(r"^([^:：@]+)\s*[:：]\s*(.*)$")
 _DIRECTIVE_ARG = re.compile(r"^@(\w+)\s*(.*)$")
 
+# 指示行の行末コメント。空白に続く # 以降を落とす。
+# 空白を要求しているのは、DTMF の「1234#」をコメント開始と
+# 誤認しないため。
+_TRAILING_COMMENT = re.compile(r"\s+#.*$")
+
 
 class ScriptError(Exception):
     pass
@@ -38,8 +44,8 @@ def parse(text, speakers, base_dir="."):
     """原稿テキストをイベントのリストにする。"""
     events = []
     for lineno, raw in enumerate(text.splitlines(), 1):
-        line = raw.strip()
-        if not line or line.startswith("#"):
+        line = strip_comment(raw)
+        if not line:
             continue
         try:
             event = _parse_line(line, speakers, base_dir)
@@ -51,6 +57,21 @@ def parse(text, speakers, base_dir="."):
     if not events:
         raise ScriptError("原稿に発話が 1 つもありません")
     return events
+
+
+def strip_comment(raw):
+    """コメントを落とした 1 行を返す。全部コメントなら空文字。
+
+    行末コメントを認めるのは @ で始まる指示行だけにしている。
+    セリフ行は読み上げる内容そのものなので、`customer: #1番で…` のような
+    文を勝手に削らないよう、# をそのまま残す。
+    """
+    line = raw.strip()
+    if line.startswith("#"):
+        return ""
+    if line.startswith("@"):
+        return _TRAILING_COMMENT.sub("", line).strip()
+    return line
 
 
 def _parse_line(line, speakers, base_dir):

@@ -10,10 +10,10 @@
 よらず一定なので、待ち合わせの判定はこちらに寄せている。
 """
 
-import locale
 import os
-import subprocess
 import time
+
+from . import proc
 
 # 状態が変わるのを待つあいだのポーリング間隔
 POLL_SECONDS = 0.5
@@ -26,23 +26,11 @@ class ServiceError(Exception):
     pass
 
 
-def _decode(raw):
-    for encoding in (locale.getpreferredencoding(False), "cp932", "utf-8"):
-        try:
-            return raw.decode(encoding)
-        except (UnicodeDecodeError, LookupError):
-            continue
-    return raw.decode("utf-8", "replace")
-
-
 def _run(cmd, timeout=60):
     try:
-        proc = subprocess.run(cmd, capture_output=True, timeout=timeout)
-    except FileNotFoundError:
-        raise ServiceError("%s を実行できません (Windows 以外では使えません)" % cmd[0])
-    except subprocess.TimeoutExpired:
-        raise ServiceError("%s が %d 秒で終わりませんでした" % (cmd[0], timeout))
-    return proc.returncode, _decode(proc.stdout).strip(), _decode(proc.stderr).strip()
+        return proc.run(cmd, timeout)
+    except proc.ProcessError as exc:
+        raise ServiceError(str(exc)) from None
 
 
 def _powershell(script, timeout=60):

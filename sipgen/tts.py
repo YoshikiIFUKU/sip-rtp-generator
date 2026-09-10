@@ -7,25 +7,35 @@ OS の合成エンジンを呼ぶ。同じ文章を何度も合成すると遅�
 
 import hashlib
 import os
-import subprocess
 import sys
 import xml.sax.saxutils as sax
 
+from . import proc
+
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_SCRIPT = os.path.join(_HERE, "speak.ps1")
 
 
 class TtsError(Exception):
     pass
 
 
+def script_path():
+    """speak.ps1 の場所。
+
+    PyInstaller で 1 ファイルにまとめると、実行時にはテンポラリへ展開された
+    sys._MEIPASS の下に置かれる。配布形態を問わず見つかるようにする。
+    """
+    bundled = getattr(sys, "_MEIPASS", None)
+    if bundled:
+        return os.path.join(bundled, "sipgen", "speak.ps1")
+    return os.path.join(_HERE, "speak.ps1")
+
+
 def _powershell(args):
-    cmd = ["powershell", "-NoProfile", "-NonInteractive",
-           "-ExecutionPolicy", "Bypass"] + args
-    proc = subprocess.run(cmd, capture_output=True)
-    out = proc.stdout.decode("utf-8", "replace")
-    err = proc.stderr.decode("utf-8", "replace")
-    return proc.returncode, out, err
+    try:
+        return proc.powershell(args)
+    except proc.ProcessError as exc:
+        raise TtsError(str(exc)) from None
 
 
 def list_voices():
@@ -68,8 +78,9 @@ def _ssml(text, pitch, rate, lang):
 def synthesize(text, out_path, voice=None, rate=0, pitch=None,
                prosody_rate=None, lang="ja-JP"):
     """1 発話ぶんの WAV を作る。out_path が既にあれば何もしない。"""
-    if not os.path.exists(_SCRIPT):
-        raise TtsError("speak.ps1 が見つかりません: %s" % _SCRIPT)
+    script = script_path()
+    if not os.path.exists(script):
+        raise TtsError("speak.ps1 が見つかりません: %s" % script)
 
     if pitch or prosody_rate:
         content = _ssml(text, pitch, prosody_rate, lang)
@@ -82,7 +93,7 @@ def synthesize(text, out_path, voice=None, rate=0, pitch=None,
         f.write(content)
 
     code, out, err = _powershell([
-        "-File", _SCRIPT, "-InFile", in_path, "-OutFile", out_path,
+        "-File", script, "-InFile", in_path, "-OutFile", out_path,
         "-Voice", voice or "", "-Rate", str(int(rate)),
     ])
     if code != 0 or not os.path.exists(out_path):
