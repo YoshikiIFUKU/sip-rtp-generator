@@ -7,8 +7,12 @@
 
 dist/ に 2 つの実行ファイルが出る。どちらも配布先に Python を入れずに動く。
 
-  SIP通話ジェネレータ.exe   GUI 版（コンソールなし）
-  gen_call.exe              CLI 版（バッチから呼ぶ用）
+  SipCallGenerator.exe   GUI 版（コンソールなし）
+  gen_call.exe           CLI 版（バッチから呼ぶ用）
+
+実行ファイル名を ASCII にしているのは、リリースへの添付やメール、共有
+フォルダを経由したときに日本語名が化けたり切り詰められたりするため。
+画面のタイトルは日本語のままなので、利用者が見る名前は変わらない。
 
 PyInstaller は「作るとき」だけ必要で、出来上がった exe の実行には要らない。
 
@@ -23,7 +27,7 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-GUI_NAME = "SIP通話ジェネレータ"
+GUI_NAME = "SipCallGenerator"
 CLI_NAME = "gen_call"
 
 # speak.ps1 は sipgen/ の下に置かれている前提で参照されるので、

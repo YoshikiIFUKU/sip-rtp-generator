@@ -172,7 +172,7 @@ python gen_call.py 通話ログ.csv --no-timings      # 開始時間を使わず
 ### 実行ファイルを受け取って使う（Python は不要）
 
 [**Releases**](https://github.com/YoshikiIFUKU/sip-rtp-generator/releases) から
-`SIP通話ジェネレータ.exe` をダウンロードして、ダブルクリックするだけです。
+`SipCallGenerator.exe` をダウンロードして、ダブルクリックするだけです。
 インストールも、Python も、追加のライブラリも要りません。
 
 > 実行ファイルはリポジトリには入れていません（バイナリを git に置くとクローンが重くなるため）。
@@ -213,7 +213,7 @@ python build_exe.py
 
 | ファイル | 用途 |
 | --- | --- |
-| `SIP通話ジェネレータ.exe` | GUI 版（コンソールなし） |
+| `SipCallGenerator.exe` | GUI 版（コンソールなし） |
 | `gen_call.exe` | CLI 版（バッチから呼ぶ用） |
 
 PyInstaller は**作るときだけ**必要で、出来上がった exe の実行には要りません。
