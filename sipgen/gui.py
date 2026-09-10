@@ -127,6 +127,8 @@ class App(tk.Tk):
         self.script_path = None
         self.config_path = None
         self.last_output = None
+        # 開始パラメータは画面では変えない。設定で別の値が来たときのために持つ
+        self.loaded_start_args = config.DEFAULTS["service"]["start_args"]
 
         self._build_menu()
         self._build_ui()
@@ -313,33 +315,65 @@ class App(tk.Tk):
         return frame
 
     def _tab_service(self, parent):
+        """取り込みタブ。
+
+        pcap を作らずに、既にある pcap を読み込ませるだけ、という使い方も
+        するので、このタブだけで完結するようにしてある。開始パラメータは
+        pcap のパス以外を固定にし、打ち間違いで取り込みが失敗しないようにする。
+        """
         frame = ttk.Frame(parent, padding=8)
 
         ttk.Label(frame, wraplength=900, foreground="#444",
-                  text="pcap を生成したあと、音声認識サービスを停止し、"
-                       "開始パラメータに pcap の絶対パスを付けて開始し直します。"
-                       "{pcap} が生成した pcap のパスに置き換わります。"
+                  text="音声認識サービスを停止し、開始パラメータに pcap の絶対パスを"
+                       "付けて開始し直します。ここで pcap を選べば、"
+                       "生成しなくても取り込ませられます。"
                   ).pack(anchor="w", pady=(0, 8))
 
+        target = ttk.LabelFrame(frame, text="取り込む pcap", padding=8)
+        target.pack(fill="x")
+
+        row = ttk.Frame(target)
+        row.pack(fill="x")
+        self.feed_path_var = tk.StringVar()
+        entry = ttk.Entry(row, textvariable=self.feed_path_var)
+        entry.pack(side="left", fill="x", expand=True)
+        ttk.Button(row, text="参照…", command=self._browse_feed_pcap).pack(
+            side="left", padx=(6, 0))
+        ttk.Button(row, text="生成した pcap を使う",
+                   command=self._use_generated_pcap).pack(side="left", padx=4)
+
+        ttk.Label(target, foreground="#888",
+                  text="生成すると自動でここに入ります。"
+                       "別の pcap を読み込ませたいときは［参照…］で選んでください。"
+                  ).pack(anchor="w", pady=(4, 0))
+
         group = ttk.LabelFrame(frame, text="サービス", padding=8)
-        group.pack(fill="x")
+        group.pack(fill="x", pady=8)
 
         self.vars[("service", "enabled")] = tk.BooleanVar()
-        ttk.Checkbutton(group, text="pcap を生成したあとサービスを入れ直して取り込ませる",
+        ttk.Checkbutton(group, text="pcap を生成したあと、続けて取り込ませる",
                         variable=self.vars[("service", "enabled")]).grid(
             row=0, column=0, columnspan=3, sticky="w", padx=4, pady=4)
 
         self._add_entry(group, 1, ("service", "name"), "サービス名", "str", "")
-        self._add_entry(group, 2, ("service", "start_args"), "開始パラメータ", "str",
-                        "{pcap} は必須", width=60)
-        self._add_entry(group, 3, ("service", "stop_timeout"), "待ち時間 (秒)", "int", "")
+        self._add_entry(group, 2, ("service", "stop_timeout"), "待ち時間 (秒)", "int", "")
+
+        ttk.Label(group, text="開始パラメータ").grid(row=3, column=0, sticky="nw",
+                                                   padx=4, pady=3)
+        self.start_args_label = ttk.Label(group, font=MONO, foreground="#333",
+                                          wraplength=620, justify="left")
+        self.start_args_label.grid(row=3, column=1, columnspan=2, sticky="w", padx=4)
+        ttk.Label(group, foreground="#888",
+                  text="pcap のパス以外は固定です。"
+                  ).grid(row=4, column=1, sticky="w", padx=4)
+        self.feed_path_var.trace_add("write", lambda *_: self._refresh_start_args())
 
         actions = ttk.Frame(group)
-        actions.grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        actions.grid(row=5, column=0, columnspan=3, sticky="w", pady=(8, 0))
         ttk.Button(actions, text="状態を確認", command=self._check_service).pack(side="left")
         ttk.Button(actions, text="発行するコマンドを表示",
                    command=self._preview_service).pack(side="left", padx=6)
-        ttk.Button(actions, text="今の pcap を取り込ませる",
+        ttk.Button(actions, text="この pcap を取り込ませる",
                    command=self._feed_now).pack(side="left")
 
         self.elevation_frame = ttk.LabelFrame(frame, text="権限", padding=8)
@@ -443,6 +477,9 @@ class App(tk.Tk):
                 var.set("" if value is None else str(value))
         self._load_speakers(cfg["speakers"])
         self._set_ack_headers(_dig(cfg, ("sip_headers", "ACK")) or [])
+        self.loaded_start_args = (_dig(cfg, ("service", "start_args"))
+                                  or config.DEFAULTS["service"]["start_args"])
+        self._refresh_start_args()
 
     def _collect_config(self):
         cfg = json.loads(json.dumps(config.DEFAULTS))
@@ -466,6 +503,7 @@ class App(tk.Tk):
         cfg["speakers"] = self._collect_speakers()
         cfg["sip_headers"] = dict(cfg.get("sip_headers") or {})
         cfg["sip_headers"]["ACK"] = self._collect_ack_headers()
+        _bury(cfg, ("service", "start_args"), self._service_settings()[1])
         return config.load(None, cfg)
 
     def _collect_ack_headers(self):
@@ -674,10 +712,69 @@ class App(tk.Tk):
     # サービス操作
     # ------------------------------------------------------------------
     def _service_settings(self):
-        return (self.vars[("service", "name")].get().strip(),
-                self.vars[("service", "start_args")].get().strip(),
+        """サービス名・開始パラメータの雛形・待ち時間。
+
+        開始パラメータは画面では変えられない。設定ファイルで別の値が
+        指定されていればそれを使うが、既定のまま使うのが普通。
+        """
+        template = (self.loaded_start_args
+                    or config.DEFAULTS["service"]["start_args"])
+        return (self.vars[("service", "name")].get().strip(), template,
                 _parse(self.vars[("service", "stop_timeout")].get(), "int",
                        ("service", "stop_timeout")) or 30)
+
+    def _refresh_start_args(self):
+        """固定の開始パラメータを、いま選んでいる pcap で表示する。"""
+        _, template, _ = self._service_settings()
+        path = self.feed_path_var.get().strip()
+        if path:
+            text = " ".join(service.build_start_args(template, path))
+        else:
+            text = template.replace("{pcap}", "<pcap のパス>")
+        self.start_args_label.config(text=text)
+
+    def open_path(self, path):
+        """起動時に渡されたファイルを、種類に応じて開く。"""
+        if not path or not os.path.exists(path):
+            self._log("ファイルが見つかりません: %s" % path, "error")
+            return
+        if path.lower().endswith(".pcap"):
+            self.feed_path_var.set(os.path.abspath(path))
+            self._select_tab("取り込み")
+            self._log("取り込む pcap を読み込みました: %s" % path, "info")
+            return
+        try:
+            with io.open(path, encoding="utf-8-sig") as f:
+                text = f.read()
+        except OSError as exc:
+            self._log("開けませんでした: %s" % exc, "error")
+            return
+        self.script_text.delete("1.0", "end")
+        self.script_text.insert("1.0", text)
+        self.script_path = path
+        self.script_label.config(text=os.path.basename(path))
+        self._log("台本を読み込みました: %s" % path, "info")
+
+    def _select_tab(self, keyword):
+        for child in self.winfo_children():
+            if isinstance(child, ttk.Notebook):
+                for index in range(child.index("end")):
+                    if keyword in child.tab(index, "text"):
+                        child.select(index)
+                        return
+
+    def _browse_feed_pcap(self):
+        path = filedialog.askopenfilename(
+            title="取り込む pcap を選ぶ",
+            filetypes=[("pcap", "*.pcap"), ("すべて", "*.*")])
+        if path:
+            self.feed_path_var.set(path)
+
+    def _use_generated_pcap(self):
+        if not self.last_output:
+            messagebox.showinfo(TITLE, "まだ pcap を生成していません。")
+            return
+        self.feed_path_var.set(self.last_output)
 
     def _check_service(self):
         name, _, _ = self._service_settings()
@@ -690,16 +787,28 @@ class App(tk.Tk):
         else:
             self._log("%s: %s" % (name, status), "info")
 
+    def _feed_target(self):
+        """取り込む pcap のパス。無ければ理由を出して None。"""
+        path = self.feed_path_var.get().strip()
+        if not path:
+            messagebox.showwarning(
+                TITLE, "取り込む pcap を選んでください。\n\n"
+                       "［参照…］で選ぶか、生成後に［生成した pcap を使う］を押します。")
+            return None
+        if not os.path.exists(path):
+            messagebox.showwarning(TITLE, "pcap が見つかりません:\n%s" % path)
+            return None
+        return path
+
     def _preview_service(self):
         name, template, _ = self._service_settings()
-        target = self.last_output or self.output_var.get().strip()
-        if not name or not template or not target:
-            messagebox.showwarning(TITLE, "サービス名・開始パラメータ・出力先を入力してください。")
+        path = self._feed_target()
+        if not path:
             return
-        if "{pcap}" not in template:
-            messagebox.showwarning(TITLE, "開始パラメータに {pcap} が入っていません。")
+        if not name:
+            messagebox.showwarning(TITLE, "サービス名を入力してください。")
             return
-        args = service.build_start_args(template, target)
+        args = service.build_start_args(template, path)
         self._log("sc stop %s" % name)
         self._log("sc start %s %s" % (name, " ".join(args)))
 
@@ -707,19 +816,19 @@ class App(tk.Tk):
         if self.busy:
             return
         name, template, timeout = self._service_settings()
-        if not self.last_output or not os.path.exists(self.last_output):
-            messagebox.showwarning(TITLE, "先に pcap を生成してください。")
+        path = self._feed_target()
+        if not path:
             return
-        if "{pcap}" not in (template or ""):
-            messagebox.showwarning(TITLE, "開始パラメータに {pcap} が入っていません。")
+        if not name:
+            messagebox.showwarning(TITLE, "サービス名を入力してください。")
             return
         if not messagebox.askyesno(
                 TITLE, "%s を停止して、次の pcap で開始し直します。\n\n%s\n\n続けますか？"
-                       % (name, self.last_output)):
+                       % (name, path)):
             return
         self._set_busy(True)
         threading.Thread(target=self._feed_worker,
-                         args=(name, template, self.last_output, timeout),
+                         args=(name, template, path, timeout),
                          daemon=True).start()
 
     def _feed_worker(self, name, template, path, timeout):
@@ -936,6 +1045,8 @@ class App(tk.Tk):
                 self._log(payload, "error")
             elif kind == "done":
                 self.last_output = payload
+                # 生成したものをそのまま取り込ませられるようにしておく
+                self.feed_path_var.set(payload)
                 self.verify_button.state(["!disabled"])
             elif kind == "idle":
                 self._set_busy(False)
@@ -1104,7 +1215,14 @@ def _parse(text, kind, key):
     return text
 
 
-def main():
+def main(argv=None):
+    """引数にファイルを渡して起動できる。
+
+    実行ファイルにドラッグ＆ドロップした場合もここに来る。
+    .pcap なら［取り込み］タブに、それ以外は台本として開く。
+    """
     app = App()
+    for path in (argv or []):
+        app.open_path(path)
     app.mainloop()
     return 0

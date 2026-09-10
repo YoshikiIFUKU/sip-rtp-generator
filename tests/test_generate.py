@@ -796,6 +796,56 @@ class TestGui(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.app._collect_config()
 
+    def test_start_args_are_fixed_and_show_the_path(self):
+        """開始パラメータは pcap のパス以外を変えられないこと。"""
+        self.assertNotIn(("service", "start_args"), self.app.vars)
+        self.assertIn("<pcap のパス>", self.app.start_args_label.cget("text"))
+
+        folder = tempfile.mkdtemp()
+        try:
+            pcap = os.path.join(folder, "既存.pcap")
+            io.open(pcap, "wb").write(b"\xd4\xc3\xb2\xa1")
+            self.app.feed_path_var.set(pcap)
+            self.app.update()
+            shown = self.app.start_args_label.cget("text")
+            self.assertTrue(shown.startswith("--callid-generate --packet-sync "))
+            self.assertIn(pcap, shown)
+        finally:
+            shutil.rmtree(folder, ignore_errors=True)
+            self.app.feed_path_var.set("")
+
+    def test_start_args_survive_the_config_round_trip(self):
+        cfg = self.app._collect_config()
+        self.assertEqual(cfg["service"]["start_args"],
+                         config.DEFAULTS["service"]["start_args"])
+
+    def test_pcap_argument_goes_to_the_ingest_tab(self):
+        """exe に pcap を渡したら、取り込みの対象になること。"""
+        folder = tempfile.mkdtemp()
+        try:
+            pcap = os.path.join(folder, "call.pcap")
+            io.open(pcap, "wb").write(b"\xd4\xc3\xb2\xa1")
+            self.app.open_path(pcap)
+            self.assertEqual(self.app.feed_path_var.get(), os.path.abspath(pcap))
+        finally:
+            shutil.rmtree(folder, ignore_errors=True)
+            self.app.feed_path_var.set("")
+
+    def test_script_argument_goes_to_the_editor(self):
+        folder = tempfile.mkdtemp()
+        try:
+            path = os.path.join(folder, "s.txt")
+            with io.open(path, "w", encoding="utf-8") as f:
+                f.write("OP：引数から読みました。\n")
+            self.app.open_path(path)
+            self.assertIn("引数から読みました",
+                          self.app.script_text.get("1.0", "end"))
+        finally:
+            shutil.rmtree(folder, ignore_errors=True)
+            self.app.script_path = None
+            self.app.script_text.delete("1.0", "end")
+            self.app.script_text.insert("1.0", self.gui.SAMPLE_SCRIPT)
+
     def test_sample_script_builds_a_valid_call(self):
         folder = tempfile.mkdtemp()
         try:

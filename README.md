@@ -457,29 +457,49 @@ python gen_call.py examples/inbound.txt -c examples/config.json -o out/inbound.p
   開始しました
 ```
 
-`{pcap}` が **生成した pcap の絶対パス**に置き換わります。
+`{pcap}` が **pcap の絶対パス**に置き換わります。
 
-| 設定 (`service`) | 既定値 | 説明 |
-| --- | --- | --- |
-| `enabled` | `false` | `--restart-service` を付けるか、ここを `true` にすると実行する |
-| `name` | `AmiVoiceRealTimeRecorder` | 対象のサービス名 |
-| `start_args` | `--callid-generate --packet-sync {pcap}` | 開始パラメータ。`{pcap}` は必須 |
-| `stop_timeout` / `start_timeout` | `30` | 状態が変わるのを待つ秒数 |
+### 既にある pcap を読み込ませるだけ
 
-コマンドラインからも変えられます。**値が `-` で始まるので `=` でつないでください**。
+生成せずに、手元の pcap を読み込ませるだけの使い方もできます。
+
+**GUI**: ［取り込み］タブで pcap を選んで［この pcap を取り込ませる］を押すだけです。
+
+* ［参照…］で任意の pcap を選べます
+* 生成した直後なら、そのパスが自動で入っています（［生成した pcap を使う］でも入ります）
+* **開始パラメータは pcap のパス以外は固定**で、画面には実際に発行される内容がそのまま出ます
+
+**実行ファイルに pcap を渡しても開けます。** ドラッグ＆ドロップでも、引数でも構いません。
 
 ```bash
-python gen_call.py 台本.txt --restart-service \
-    --service-name MyRecorder \
-    --service-args="--callid-generate --packet-sync {pcap}"
+SipCallGenerator.exe D:\calls\call.pcap
 ```
 
-### 既存の pcap をもう一度流す
+`.pcap` を渡すと［取り込み］タブに入り、それ以外のファイルは台本として開きます。
+
+**コマンドライン**:
 
 ```bash
 python feed_pcap.py out/inbound.pcap            # 停止 → 開始
 python feed_pcap.py --status                    # 状態だけ見る
 python feed_pcap.py out/inbound.pcap --dry-run  # 実行せず、発行するコマンドを表示
+```
+
+### 設定
+
+| 設定 (`service`) | 既定値 | 説明 |
+| --- | --- | --- |
+| `enabled` | `false` | `--restart-service` を付けるか、ここを `true` にすると生成後に続けて実行する |
+| `name` | `AmiVoiceRealTimeRecorder` | 対象のサービス名 |
+| `start_args` | `--callid-generate --packet-sync {pcap}` | 開始パラメータ。**GUI からは変えられません**（打ち間違いで取り込みが失敗しないよう固定）。バッチ用途で変える必要があるときだけ、設定ファイルかコマンドラインで指定します |
+| `stop_timeout` / `start_timeout` | `30` | 状態が変わるのを待つ秒数 |
+
+開始パラメータをどうしても変える場合は、**値が `-` で始まるので `=` でつないでください**。
+
+```bash
+python gen_call.py 台本.txt --restart-service --service-name MyRecorder \
+    --service-args="--callid-generate --packet-sync {pcap}"
+python feed_pcap.py call.pcap --args="--packet-sync {pcap}"
 ```
 
 ### 注意

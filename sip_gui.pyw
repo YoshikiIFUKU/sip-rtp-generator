@@ -16,7 +16,8 @@ from sipgen import gui
 
 def main():
     try:
-        return gui.main()
+        # 引数にファイルを渡せる。実行ファイルへのドラッグ＆ドロップもここに来る
+        return gui.main(sys.argv[1:])
     except Exception:
         # GUI が立ち上がる前に落ちるとコンソールがなく原因が分からないので、
         # ダイアログで出す
